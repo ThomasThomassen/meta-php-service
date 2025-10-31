@@ -1,0 +1,22 @@
+<IfModule mod_rewrite.c>
+  Options -MultiViews
+  RewriteEngine On
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule ^ index.php [QSA,L]
+</IfModule>
+
+# Instruct crawlers not to index this subdomain (also set in PHP for dynamic responses)
+<IfModule mod_headers.c>
+  # Use 'always' so the header is present on 200/204/301/302/304 responses as well
+  Header always set X-Robots-Tag "noindex, nofollow, noarchive"
+</IfModule>
+
+# Block access to .env or other dotfiles
+<FilesMatch "^\.">
+  Require all denied
+</FilesMatch>
+
+# Optional: show PHP errors during debugging (comment out in production)
+# php_flag display_errors On
+# php_value error_reporting 32767

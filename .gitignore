@@ -1,0 +1,17 @@
+# Dependencies
+vendor/
+
+# Environment
+.env
+
+# Cache and logs
+var/cache/
+var/log/
+var/secret/
+
+# IDE
+.vscode/
+.idea/
+node_modules
+.vscode
+.DS_Store
