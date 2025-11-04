@@ -21,7 +21,7 @@ class InstagramService
         } else {
             $options = [
                 'base_uri' => 'https://graph.facebook.com/',
-                'timeout' => 10.0,
+                'timeout' => 60.0,
             ];
             // TLS/CA verification configuration for local environments
             $verifyEnv = Env::get('HTTP_VERIFY_SSL', '1'); // '1' (default) or '0'
