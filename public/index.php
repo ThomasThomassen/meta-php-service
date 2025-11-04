@@ -81,7 +81,8 @@ try {
 }
 
 // Optional: lightweight daily token auto-refresh, triggered opportunistically by requests
-try {
+// Commented out - setup a daily/weekly cron job to /auth/token/auto-refresh?admin_token=... instead
+/* try {
     if ((int) (Env::get('AUTO_REFRESH_ENABLED', '0') ?? '0') === 1) {
         $window = (int) (Env::get('AUTO_REFRESH_WINDOW_SECONDS', '86400') ?? '86400');
         $scheduler = new Scheduler(dirname(__DIR__) . '/var/cache');
@@ -114,7 +115,7 @@ try {
     }
 } catch (Throwable $e) {
     Logger::error('scheduler_error: ' . $e->getMessage());
-}
+} */
 
 // CORS handling (allow only whitelisted origins)
 App\Support\Cors::handle();
