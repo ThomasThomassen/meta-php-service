@@ -81,7 +81,7 @@ try {
 }
 
 // Optional: lightweight daily token auto-refresh, triggered opportunistically by requests
-// Commented out - setup a daily/weekly cron job to /auth/token/auto-refresh?admin_token=... instead
+// Commented out - i setup a cron job to /auth/token/auto-refresh?admin_token=... instead
 /* try {
     if ((int) (Env::get('AUTO_REFRESH_ENABLED', '0') ?? '0') === 1) {
         $window = (int) (Env::get('AUTO_REFRESH_WINDOW_SECONDS', '86400') ?? '86400');
@@ -171,8 +171,19 @@ $router->get('/instagram/hashtag', [App\Controllers\InstagramController::class, 
 
 // Instagram: own posts and tagged posts
 $router->get('/instagram/self/media', [App\Controllers\InstagramController::class, 'getSelfMedia']);
+$router->get('/instagram/self/media/local', [App\Controllers\InstagramController::class, 'getLocalUserMedia']);
+$router->get('/instagram/self/media/refresh-all', [App\Controllers\InstagramController::class, 'refreshAllUserMedia']);
+$router->get('/instagram/self/media/refresh-all-async', [App\Controllers\InstagramController::class, 'refreshAllUserMediaAsync']);
 $router->get('/instagram/self/tags', [App\Controllers\InstagramController::class, 'getTaggedMedia']);
 $router->get('/instagram/self/merged', [App\Controllers\InstagramController::class, 'getMergedMedia']);
+// Fetch children for a specific media id (e.g., carousel album)
+$router->get('/instagram/self/tags/getchildren', [App\Controllers\InstagramController::class, 'getChildrenByMediaId']);
+// Offline/local tagged data queries
+$router->get('/instagram/self/tags/local', [App\Controllers\InstagramController::class, 'getLocalTagged']);
+// Refresh and persist all tagged posts (admin restricted)
+$router->get('/instagram/self/tags/refresh-all', [App\Controllers\InstagramController::class, 'refreshAllTagged']);
+// Async refresh trigger (admin restricted)
+$router->get('/instagram/self/tags/refresh-all-async', [App\Controllers\InstagramController::class, 'refreshAllTaggedAsync']);
 
 // Token utilities (restricted by IP or admin token)
 $router->get('/auth/token/debug', [App\Controllers\AuthController::class, 'debug']);
