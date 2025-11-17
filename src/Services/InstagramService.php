@@ -5,6 +5,7 @@ namespace App\Services;
 
 use App\Support\Cache;
 use App\Support\Env;
+use App\Support\Logger;
 use App\Support\SecretStore;
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\GuzzleException;
@@ -213,45 +214,62 @@ class InstagramService
         if (!$igBusinessId || !$accessToken) {
             throw new \RuntimeException('Instagram credentials missing: set IG_BUSINESS_ACCOUNT_ID and IG_ACCESS_TOKEN');
         }
-        $perPage = max(1, min(50, $perPage));
+        $attemptPerPage = max(1, min(50, $perPage));
         $fields = $fields ?: 'id,caption,media_type,media_url,permalink,thumbnail_url,timestamp,username,children{media_type,media_url,thumbnail_url}';
-
-        $basePath = sprintf('%s/%s/tags', $apiVersion, $igBusinessId);
-        $initialQuery = [
-            'fields' => $fields,
-            'limit' => $perPage,
-            'access_token' => $accessToken,
-        ];
-        $nextUrl = $basePath . '?' . http_build_query($initialQuery);
-        $page = 0;
         $map = [];
+        while (true) {
+            $basePath = sprintf('%s/%s/tags', $apiVersion, $igBusinessId);
+            $initialQuery = [
+                'fields' => $fields,
+                'limit' => $attemptPerPage,
+                'access_token' => $accessToken,
+            ];
+            $nextUrl = $basePath . '?' . http_build_query($initialQuery);
+            $page = 0;
+            $map = [];
 
-        do {
-            $page++;
-            try {
-                // "next" provides an absolute URL; the initial URL is relative to base_uri
-                $resp = $this->http->get($nextUrl);
-            } catch (GuzzleException $e) {
-                // Stop on error; return what we have
-                break;
-            }
-            $data = json_decode((string) $resp->getBody(), true) ?: [];
-            $items = $data['data'] ?? [];
-            foreach ($items as $it) {
-                $n = $this->normalizeMedia($it);
-                $id = (string)($n['id'] ?? '');
-                if ($id !== '') {
-                    $map[$id] = $n;
+            $reduceSuggested = false;
+            do {
+                $page++;
+                try {
+                    // "next" provides an absolute URL; the initial URL is relative to base_uri
+                    $resp = $this->http->get($nextUrl);
+                } catch (GuzzleException $e) {
+                    $reduceSuggested = $this->isReduceAmountError($e);
+                    if ($reduceSuggested) {
+                        Logger::warning(sprintf('Graph reduce-data hint on tagged fetch (perPage=%d). Will retry smaller.', $attemptPerPage));
+                    } else {
+                        Logger::error('Tagged fetch failed: ' . $e->getMessage());
+                    }
+                    break;
                 }
+                $data = json_decode((string) $resp->getBody(), true) ?: [];
+                $items = $data['data'] ?? [];
+                foreach ($items as $it) {
+                    $n = $this->normalizeMedia($it);
+                    $id = (string)($n['id'] ?? '');
+                    if ($id !== '') {
+                        $map[$id] = $n;
+                    }
+                }
+                $nextUrl = (isset($data['paging']['next']) && is_string($data['paging']['next'])) ? $data['paging']['next'] : null;
+            } while ($nextUrl && $page < $maxPages);
+
+            if ($reduceSuggested) {
+                if ($attemptPerPage > 1) {
+                    $attemptPerPage--; // try again with smaller page size
+                    continue;
+                }
+                Logger::error('Graph reduce-data hint persisted down to perPage=0; accepting empty/partial snapshot.');
             }
-            $nextUrl = (isset($data['paging']['next']) && is_string($data['paging']['next'])) ? $data['paging']['next'] : null;
-        } while ($nextUrl && $page < $maxPages);
+            break; // success or non-retry error
+        }
 
         // Sort newest first
         $all = array_values($map);
         usort($all, function ($a, $b) {
-            $ta = isset($a['timestamp']) ? strtotime((string)$a['timestamp']) ?: 0 : 0;
-            $tb = isset($b['timestamp']) ? strtotime((string)$b['timestamp']) ?: 0 : 0;
+            $ta = isset($a['timestamp']) ? (strtotime((string)$a['timestamp']) ?: 0) : 0;
+            $tb = isset($b['timestamp']) ? (strtotime((string)$b['timestamp']) ?: 0) : 0;
             return $tb <=> $ta;
         });
 
@@ -266,7 +284,6 @@ class InstagramService
 
         return ['updated_at' => $payload['updated_at'], 'count' => $payload['count']];
     }
-
     /**
      * Fetch all self (user) media via paging and persist to a JSON file.
      * Structure mirrors tagged snapshot: {updated_at,count,data[]} with normalized items.
@@ -294,42 +311,63 @@ class InstagramService
         if (!$igBusinessId || !$accessToken) {
             throw new \RuntimeException('Instagram credentials missing: set IG_BUSINESS_ACCOUNT_ID and IG_ACCESS_TOKEN');
         }
-        $perPage = max(1, min(50, $perPage));
+        $attemptPerPage = max(1, min(50, $perPage));
         $fields = $fields ?: 'id,caption,media_type,media_url,permalink,thumbnail_url,timestamp,username,children{media_type,media_url,thumbnail_url}';
 
-        $basePath = sprintf('%s/%s/media', $apiVersion, $igBusinessId);
-        $initialQuery = [
-            'fields' => $fields,
-            'limit' => $perPage,
-            'access_token' => $accessToken,
-        ];
-        $nextUrl = $basePath . '?' . http_build_query($initialQuery);
-        $page = 0;
         $map = [];
+        while (true) {
+            $basePath = sprintf('%s/%s/media', $apiVersion, $igBusinessId);
+            $initialQuery = [
+                'fields' => $fields,
+                'limit' => $attemptPerPage,
+                'access_token' => $accessToken,
+            ];
+            $nextUrl = $basePath . '?' . http_build_query($initialQuery);
+            $page = 0;
+            $map = [];
 
-        do {
-            $page++;
-            try {
-                $resp = $this->http->get($nextUrl);
-            } catch (GuzzleException $e) {
-                break; // stop on error
-            }
-            $data = json_decode((string)$resp->getBody(), true) ?: [];
-            $items = $data['data'] ?? [];
-            foreach ($items as $it) {
-                $n = $this->normalizeMedia($it);
-                $id = (string)($n['id'] ?? '');
-                if ($id !== '') {
-                    $map[$id] = $n;
+            $reduceSuggested = false;
+            do {
+                $page++;
+                try {
+                    $resp = $this->http->get($nextUrl);
+                } catch (GuzzleException $e) {
+                    $reduceSuggested = $this->isReduceAmountError($e);
+                    if ($reduceSuggested) {
+                        Logger::warning(sprintf('Graph reduce-data hint on user media fetch (perPage=%d). Will retry smaller.', $attemptPerPage));
+                    } else {
+                        Logger::error('User media fetch failed: ' . $e->getMessage());
+                    }
+                    break;
                 }
+                $data = json_decode((string)$resp->getBody(), true) ?: [];
+                $items = $data['data'] ?? [];
+                foreach ($items as $it) {
+                    $n = $this->normalizeMedia($it);
+                    $id = (string)($n['id'] ?? '');
+                    if ($id !== '') {
+                        $map[$id] = $n;
+                    }
+                }
+                $nextUrl = (isset($data['paging']['next']) && is_string($data['paging']['next'])) ? $data['paging']['next'] : null;
+            } while ($nextUrl && $page < $maxPages);
+
+            if ($reduceSuggested) {
+                if ($attemptPerPage > 1) {
+                    $attemptPerPage--; // try again with smaller page size
+                    continue;
+                }
+                Logger::error('Graph reduce-data hint persisted down to perPage=0 for user media; accepting empty/partial snapshot.');
             }
-            $nextUrl = (isset($data['paging']['next']) && is_string($data['paging']['next'])) ? $data['paging']['next'] : null;
-        } while ($nextUrl && $page < $maxPages);
+            break; // success or non-retry error
+        }
 
         $all = array_values($map);
         usort($all, function ($a, $b) {
-            $ta = isset($a['timestamp']) ? strtotime((string)$a['timestamp']) ?: 0 : 0;
-            $tb = isset($b['timestamp']) ? strtotime((string)$b['timestamp']) ?: 0 : 0;
+            $tsA = isset($a['timestamp']) ? strtotime((string)$a['timestamp']) : false;
+            $tsB = isset($b['timestamp']) ? strtotime((string)$b['timestamp']) : false;
+            $ta = ($tsA !== false) ? (int)$tsA : 0;
+            $tb = ($tsB !== false) ? (int)$tsB : 0;
             return $tb <=> $ta; // newest first
         });
 
@@ -391,6 +429,25 @@ class InstagramService
             'count' => (int)($data['count'] ?? count($list)),
             'data' => is_array($list) ? $list : [],
         ];
+    }
+
+        /**
+     * Detect Graph API error asking to reduce the amount of data requested.
+     */
+    private function isReduceAmountError(\GuzzleHttp\Exception\GuzzleException $e): bool
+    {
+        if ($e instanceof \GuzzleHttp\Exception\RequestException) {
+            $resp = $e->getResponse();
+            if ($resp) {
+                $body = (string) $resp->getBody();
+                $j = json_decode($body, true);
+                $code = (int)($j['error']['code'] ?? 0);
+                if ($code === 1) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**

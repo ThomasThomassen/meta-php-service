@@ -13,4 +13,13 @@ class Logger
         $line = '[' . gmdate('c') . '] ERROR ' . $message . PHP_EOL;
         @file_put_contents($file, $line, FILE_APPEND | LOCK_EX);
     }
+    public static function warning(string $message): void
+    {
+        $logDir = dirname(__DIR__, 2) . '/var/log';
+        if (!is_dir($logDir)) @mkdir($logDir, 0777, true);
+        $file = $logDir . '/app.log';
+        $line = '[' . gmdate('c') . '] WARN  ' . $message . PHP_EOL;
+        @file_put_contents($file, $line, FILE_APPEND | LOCK_EX);
+    }
+
 }
