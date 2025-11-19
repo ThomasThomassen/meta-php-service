@@ -268,19 +268,35 @@ class InstagramService
         // Sort newest first
         $all = array_values($map);
         usort($all, function ($a, $b) {
-            $ta = isset($a['timestamp']) ? (strtotime((string)$a['timestamp']) ?: 0) : 0;
-            $tb = isset($b['timestamp']) ? (strtotime((string)$b['timestamp']) ?: 0) : 0;
+            $tsA = isset($a['timestamp']) ? strtotime((string)$a['timestamp']) : false;
+            $tsB = isset($b['timestamp']) ? strtotime((string)$b['timestamp']) : false;
+            $ta = ($tsA !== false) ? (int)$tsA : 0;
+            $tb = ($tsB !== false) ? (int)$tsB : 0;
             return $tb <=> $ta;
         });
 
+        $count = count($all);
+        $outPath = $outFile ?: dirname(__DIR__, 2) . '/var/cache/ig_tagged.json';
+        if ($count === 0) {
+            Logger::warning('Tagged media snapshot empty; skipping write to preserve previous data.');
+            if (is_file($outPath)) {
+                $raw = @file_get_contents($outPath);
+                $prev = $raw ? (json_decode($raw, true) ?: []) : [];
+                return [
+                    'updated_at' => $prev['updated_at'] ?? null,
+                    'count' => (int)($prev['count'] ?? 0),
+                ];
+            }
+            return ['updated_at' => null, 'count' => 0];
+        }
+
         $payload = [
             'updated_at' => gmdate('c'),
-            'count' => count($all),
+            'count' => $count,
             'data' => $all,
         ];
 
-        $outFile = $outFile ?: dirname(__DIR__, 2) . '/var/cache/ig_tagged.json';
-        @file_put_contents($outFile, json_encode($payload));
+        @file_put_contents($outPath, json_encode($payload));
 
         return ['updated_at' => $payload['updated_at'], 'count' => $payload['count']];
     }
@@ -373,13 +389,27 @@ class InstagramService
 
         // Children are requested inline via Graph fields by default (children{...}).
 
+        $count = count($all);
+        $outPath = $outFile ?: dirname(__DIR__, 2) . '/var/cache/ig_user_media.json';
+        if ($count === 0) {
+            Logger::warning('User media snapshot empty; skipping write to preserve previous data.');
+            if (is_file($outPath)) {
+                $raw = @file_get_contents($outPath);
+                $prev = $raw ? (json_decode($raw, true) ?: []) : [];
+                return [
+                    'updated_at' => $prev['updated_at'] ?? null,
+                    'count' => (int)($prev['count'] ?? 0),
+                ];
+            }
+            return ['updated_at' => null, 'count' => 0];
+        }
+
         $payload = [
             'updated_at' => gmdate('c'),
-            'count' => count($all),
+            'count' => $count,
             'data' => $all,
         ];
-        $outFile = $outFile ?: dirname(__DIR__, 2) . '/var/cache/ig_user_media.json';
-        @file_put_contents($outFile, json_encode($payload));
+        @file_put_contents($outPath, json_encode($payload));
         return ['updated_at' => $payload['updated_at'], 'count' => $payload['count']];
     }
 
@@ -431,7 +461,7 @@ class InstagramService
         ];
     }
 
-        /**
+    /**
      * Detect Graph API error asking to reduce the amount of data requested.
      */
     private function isReduceAmountError(\GuzzleHttp\Exception\GuzzleException $e): bool
@@ -463,8 +493,8 @@ class InstagramService
         $cacheTtl = (int) (Env::get('CACHE_TTL_SECONDS', '86400') ?? '86400'); // default 24 hours
         $limit = max(1, min(50, $limit));
 
-    // Do not request children inline; fetch via separate endpoint when needed
-    $fields = $fields ?: 'id,caption,media_type,media_url,permalink,thumbnail_url,timestamp,username';
+        // Do not request children inline; fetch via separate endpoint when needed
+        $fields = $fields ?: 'id,caption,media_type,media_url,permalink,thumbnail_url,timestamp,username';
         $cacheKey = sprintf('ig_user_merged_%s_%d_%s', (string)$igBusinessId, $limit, md5($fields));
         $cached = $this->cache->get($cacheKey);
         if (is_array($cached)) {
@@ -478,8 +508,10 @@ class InstagramService
         // Merge and sort by timestamp desc; de-duplicate by id
         $all = array_merge($self, $tags);
         usort($all, function ($a, $b) {
-            $ta = isset($a['timestamp']) ? strtotime((string)$a['timestamp']) ?: 0 : 0;
-            $tb = isset($b['timestamp']) ? strtotime((string)$b['timestamp']) ?: 0 : 0;
+            $tsA = isset($a['timestamp']) ? strtotime((string)$a['timestamp']) : false;
+            $tsB = isset($b['timestamp']) ? strtotime((string)$b['timestamp']) : false;
+            $ta = ($tsA !== false) ? (int)$tsA : 0;
+            $tb = ($tsB !== false) ? (int)$tsB : 0;
             return $tb <=> $ta; // newest first
         });
         $seen = [];
