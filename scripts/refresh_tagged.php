@@ -9,6 +9,11 @@ App\Support\Env::load($root);
 use App\Services\InstagramService;
 use App\Support\Env;
 
+// Ensure STDERR exists for logging when running in constrained environments.
+if (!defined('STDERR')) {
+    define('STDERR', fopen('php://stderr', 'w'));
+}
+
 // Parse simple CLI args: --per-page=, --max-pages=, --fields=
 $perPage = 3;
 $maxPages = 500;

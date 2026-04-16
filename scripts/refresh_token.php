@@ -10,6 +10,11 @@ use App\Services\TokenService;
 use App\Support\Env;
 use App\Support\SecretStore;
 
+// check if STDERR is defined
+if (!defined('STDERR')) {
+    define('STDERR', fopen('php://stderr', 'w'));
+}
+
 $thresholdDays = (int) (Env::get('REFRESH_THRESHOLD_DAYS', '30') ?? '30');
 $storage = Env::get('IG_TOKEN_STORAGE');
 $token = null;

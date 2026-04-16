@@ -14,6 +14,11 @@ $perPage = 3;
 $maxPages = 500;
 $fields = null;
 
+// check if STDERR is defined
+if (!defined('STDERR')) {
+    define('STDERR', fopen('php://stderr', 'w'));
+}
+
 foreach ($argv as $arg) {
     if (preg_match('/^--per-page=(\d{1,3})$/', $arg, $m)) {
         $perPage = max(1, min(50, (int)$m[1]));

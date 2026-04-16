@@ -216,8 +216,12 @@ class InstagramService
         }
         $attemptPerPage = max(1, min(50, $perPage));
         $fields = $fields ?: 'id,caption,media_type,media_url,permalink,thumbnail_url,timestamp,username,children{media_type,media_url,thumbnail_url}';
+        $didStripChildren = false;
         $map = [];
         while (true) {
+            if (defined('STDERR')) {
+                @fwrite(STDERR, sprintf("[tagged-refresh] attempt perPage=%d fields_has_children=%s\n", $attemptPerPage, (is_string($fields) && str_contains($fields, 'children{')) ? 'yes' : 'no'));
+            }
             $basePath = sprintf('%s/%s/tags', $apiVersion, $igBusinessId);
             $initialQuery = [
                 'fields' => $fields,
@@ -233,13 +237,37 @@ class InstagramService
                 $page++;
                 try {
                     // "next" provides an absolute URL; the initial URL is relative to base_uri
-                    $resp = $this->http->get($nextUrl);
+                    $resp = $this->http->get($nextUrl, ['http_errors' => false]);
                 } catch (GuzzleException $e) {
                     $reduceSuggested = $this->isReduceAmountError($e);
                     if ($reduceSuggested) {
                         Logger::warning(sprintf('Graph reduce-data hint on tagged fetch (perPage=%d). Will retry smaller.', $attemptPerPage));
+                        if (defined('STDERR')) {
+                            @fwrite(STDERR, sprintf("[tagged-refresh] Graph asked to reduce data (perPage=%d)\n", $attemptPerPage));
+                        }
                     } else {
-                        Logger::error('Tagged fetch failed: ' . $e->getMessage());
+                        Logger::error('Tagged fetch failed: ' . $this->sanitizeForLogs($e->getMessage()));
+                        if (defined('STDERR')) {
+                            @fwrite(STDERR, "[tagged-refresh] HTTP failed (see app.log for details)\n");
+                        }
+                    }
+                    break;
+                }
+
+                $status = $resp->getStatusCode();
+                if ($status >= 400) {
+                    $body = (string) $resp->getBody();
+                    $reduceSuggested = $this->isReduceAmountErrorBody($body);
+                    if ($reduceSuggested) {
+                        Logger::warning(sprintf('Graph reduce-data hint on tagged fetch (perPage=%d). Will retry smaller.', $attemptPerPage));
+                        if (defined('STDERR')) {
+                            @fwrite(STDERR, sprintf("[tagged-refresh] Graph asked to reduce data (perPage=%d)\n", $attemptPerPage));
+                        }
+                    } else {
+                        Logger::error('Tagged fetch failed: HTTP ' . $status . ' ' . $this->sanitizeForLogs($body));
+                        if (defined('STDERR')) {
+                            @fwrite(STDERR, "[tagged-refresh] HTTP failed (see app.log for details)\n");
+                        }
                     }
                     break;
                 }
@@ -257,10 +285,30 @@ class InstagramService
 
             if ($reduceSuggested) {
                 if ($attemptPerPage > 1) {
-                    $attemptPerPage--; // try again with smaller page size
+                    // Back off faster than -1 to avoid a long retry ladder.
+                    $nextAttempt = (int) floor($attemptPerPage / 2);
+                    $attemptPerPage = max(1, min($attemptPerPage - 1, $nextAttempt));
+                    if (defined('STDERR')) {
+                        @fwrite(STDERR, sprintf("[tagged-refresh] retrying with smaller perPage=%d\n", $attemptPerPage));
+                    }
                     continue;
                 }
-                Logger::error('Graph reduce-data hint persisted down to perPage=0; accepting empty/partial snapshot.');
+
+                // If we're already at the smallest page size, the "amount of data" can also be fields expansion.
+                if (!$didStripChildren && is_string($fields) && str_contains($fields, 'children{')) {
+                    $didStripChildren = true;
+                    $fields = $this->stripChildrenField($fields);
+                    Logger::warning('Graph reduce-data hint persisted at perPage=1; retrying without children expansion.');
+                    if (defined('STDERR')) {
+                        @fwrite(STDERR, "[tagged-refresh] retrying without children expansion\n");
+                    }
+                    continue;
+                }
+
+                Logger::error('Graph reduce-data hint persisted down to perPage=1; accepting empty/partial snapshot.');
+                if (defined('STDERR')) {
+                    @fwrite(STDERR, "[tagged-refresh] reduce-data persisted; giving up and keeping previous snapshot if present\n");
+                }
             }
             break; // success or non-retry error
         }
@@ -470,14 +518,38 @@ class InstagramService
             $resp = $e->getResponse();
             if ($resp) {
                 $body = (string) $resp->getBody();
-                $j = json_decode($body, true);
-                $code = (int)($j['error']['code'] ?? 0);
-                if ($code === 1) {
-                    return true;
-                }
+                return $this->isReduceAmountErrorBody($body);
             }
         }
         return false;
+    }
+
+    private function isReduceAmountErrorBody(string $body): bool
+    {
+        $j = json_decode($body, true);
+        $code = (int)($j['error']['code'] ?? 0);
+        $message = (string)($j['error']['message'] ?? '');
+        return $code === 1 || stripos($message, 'reduce the amount of data') !== false;
+    }
+
+    private function sanitizeForLogs(string $message): string
+    {
+        $sanitized = preg_replace('/(access_token=)([^&\s]+)/i', '$1REDACTED', $message);
+        return is_string($sanitized) ? $sanitized : $message;
+    }
+
+    /**
+     * Remove a children{...} expansion from a Graph API fields list.
+     */
+    private function stripChildrenField(string $fields): string
+    {
+        $stripped = preg_replace('/,?\s*children\{[^}]*\}\s*/', '', $fields);
+        if (!is_string($stripped) || trim($stripped) === '') {
+            return $fields;
+        }
+        $stripped = preg_replace('/\s*,\s*/', ',', trim($stripped));
+        $stripped = trim((string)$stripped, ',');
+        return $stripped !== '' ? $stripped : $fields;
     }
 
     /**
