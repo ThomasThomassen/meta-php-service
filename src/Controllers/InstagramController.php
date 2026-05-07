@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace App\Controllers;
 
 use App\Services\InstagramService;
+use App\Support\MediaProxy;
 use App\Support\Response;
 
 class InstagramController
@@ -25,6 +26,7 @@ class InstagramController
         $service = new InstagramService();
         try {
             $data = $service->getHashtagMedia($tag, $type, $limit, $fields);
+            $data = MediaProxy::rewriteItems($data);
             return Response::json(['tag' => $tag, 'type' => $type, 'count' => count($data), 'data' => $data]);
         } catch (\Throwable $e) {
             return Response::json(['error' => 'instagram_error'], 502);
@@ -54,6 +56,7 @@ class InstagramController
         $service = new InstagramService();
         try {
             $data = $service->getUserMedia($limit, $fields);
+            $data = MediaProxy::rewriteItems($data);
             return Response::json(['scope' => 'self', 'count' => count($data), 'data' => $data]);
         } catch (\Throwable $e) {
             return Response::json(['error' => 'instagram_error'], 502);
@@ -67,6 +70,7 @@ class InstagramController
         $service = new InstagramService();
         try {
             $data = $service->getUserTaggedMedia($limit, $fields);
+            $data = MediaProxy::rewriteItems($data);
             return Response::json(['scope' => 'tags', 'count' => count($data), 'data' => $data]);
         } catch (\Throwable $e) {
             return Response::json(['error' => 'instagram_error', 'message' => $e->getMessage()], 502);
@@ -350,6 +354,8 @@ class InstagramController
             unset($it);
         }
 
+        $slice = MediaProxy::rewriteItems($slice);
+
         return Response::json([
             'source' => 'local',
             'updated_at' => $store['updated_at'] ?? null,
@@ -502,6 +508,8 @@ class InstagramController
             unset($it);
         }
 
+        $slice = MediaProxy::rewriteItems($slice);
+
         return Response::json([
             'source' => 'local',
             'updated_at' => $store['updated_at'] ?? null,
@@ -519,6 +527,7 @@ class InstagramController
         $service = new InstagramService();
         try {
             $data = $service->getMergedSelfAndTagged($limit, $fields);
+            $data = MediaProxy::rewriteItems($data);
             return Response::json(['scope' => 'merged', 'count' => count($data), 'data' => $data]);
         } catch (\Throwable $e) {
             return Response::json(['error' => 'instagram_error'], 502);
@@ -535,9 +544,15 @@ class InstagramController
         $service = new InstagramService();
         try {
             $data = $service->getMediaChildren($mediaId, $fields);
+            $data = MediaProxy::rewriteItems($data);
             return Response::json(['scope' => 'children', 'media_id' => $mediaId, 'count' => count($data), 'data' => $data]);
         } catch (\Throwable $e) {
             return Response::json(['error' => 'instagram_error', 'message' => $e->getMessage()], 502);
         }
+    }
+
+    public function getMediaAsset(): string
+    {
+        return MediaProxy::serveFromRequest();
     }
 }

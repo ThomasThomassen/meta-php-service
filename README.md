@@ -13,6 +13,7 @@ Small PHP 8.1 service to interact with Meta Graph API (Instagram) and expose a m
  - GET /diagnostics (when DIAGNOSTICS_ENABLED=1)
 - CORS whitelist via `ALLOWED_ORIGINS`
 - Simple file cache to reduce API calls
+- Optional local media proxy so Instagram images/videos can be cached from your own domain
 - Optional per-IP rate limiting for public Instagram endpoints
 - Health check at `/health`
 
@@ -40,6 +41,12 @@ Permissions generally required: `instagram_basic`, `pages_read_engagement`; depe
      - `RATE_LIMIT_WINDOW_SECONDS` (default: 60)
      - `RATE_LIMIT_TRUST_PROXY` (0/1; enable only behind a trusted proxy)
      - `RATE_LIMIT_STORAGE` (custom counters directory; default: var/ratelimit)
+   - Optional (media proxy):
+     - `MEDIA_PROXY_ENABLED=1` to rewrite returned `media_url` values to a local proxy endpoint
+     - `MEDIA_PROXY_TTL_SECONDS` to control browser cache lifetime for proxied media
+    - `MEDIA_PROXY_BASE_URL` if the public API origin differs from the PHP server's detected host
+     - `MEDIA_PROXY_MAX_BYTES` to cap a single proxied download
+     - `MEDIA_PROXY_ALLOWED_HOSTS` to restrict which remote media hosts are allowed
    - Optional (token auto-refresh):
      - `REFRESH_THRESHOLD_DAYS` (e.g., 45; refresh when token expires within this window)
      - `AUTO_REFRESH_ENABLED=1` to allow opportunistic background refresh
@@ -99,6 +106,24 @@ GET `/instagram/self/media?limit=12&fields=...`
 GET `/instagram/self/tags?limit=12&fields=...`
 
 Response shape is the same as above (`data` array of normalized media items).
+
+## Media caching and PageSpeed
+If your frontend renders the `media_url` values directly, PageSpeed evaluates the cache headers from Instagram's CDN, not from this API. In that mode, this service cannot improve the reported asset TTL.
+
+To take control of cache headers yourself, enable the local media proxy:
+
+```env
+MEDIA_PROXY_ENABLED=1
+MEDIA_PROXY_TTL_SECONDS=86400
+MEDIA_PROXY_MAX_BYTES=52428800
+```
+
+When enabled, API responses rewrite each `media_url` to `/instagram/media?url=...`. That endpoint:
+- validates the remote host against `MEDIA_PROXY_ALLOWED_HOSTS`
+- downloads and stores the asset under `var/cache/media`
+- serves it with `Cache-Control`, `ETag`, `Expires`, and `Last-Modified`
+
+This is the practical way to improve PageSpeed for Instagram-hosted assets, especially videos, because the browser now requests them from your domain instead of Instagram's CDN.
 
 ## CORS
 Set `ALLOWED_ORIGINS` to a comma-separated list of origins (scheme + host[:port]). Use `*` to allow all (not recommended in production). Preflight OPTIONS requests are handled automatically.

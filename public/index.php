@@ -168,6 +168,7 @@ $router->get('/ping', function () {
 // Instagram hashtag endpoint
 // Example: /instagram/hashtag?tag=sunset&limit=10&type=recent
 $router->get('/instagram/hashtag', [App\Controllers\InstagramController::class, 'getHashtagMedia']);
+$router->get('/instagram/media', [App\Controllers\InstagramController::class, 'getMediaAsset']);
 
 // Instagram: own posts and tagged posts
 $router->get('/instagram/self/media', [App\Controllers\InstagramController::class, 'getSelfMedia']);
