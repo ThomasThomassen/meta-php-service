@@ -36,8 +36,24 @@ class MediaProxy
             return $item;
         }
 
-        if (isset($item['media_url']) && is_string($item['media_url'])) {
-            $item['media_url'] = self::buildProxyUrl($item['media_url']);
+        $thumbnailUrl = isset($item['thumbnail_url']) && is_string($item['thumbnail_url']) ? $item['thumbnail_url'] : null;
+        $mediaUrl = isset($item['media_url']) && is_string($item['media_url']) ? $item['media_url'] : null;
+
+        if (self::preferVideoPosterImage($item) && $thumbnailUrl !== null && $thumbnailUrl !== '') {
+            if (($item['video_url'] ?? null) === null && $mediaUrl !== null && $mediaUrl !== '') {
+                $item['video_url'] = $mediaUrl;
+            }
+            $item['media_url'] = self::buildProxyUrl($thumbnailUrl);
+        } elseif ($mediaUrl !== null) {
+            $item['media_url'] = self::buildProxyUrl($mediaUrl);
+        }
+
+        if ($thumbnailUrl !== null && $thumbnailUrl !== '') {
+            $item['thumbnail_url'] = self::buildProxyUrl($thumbnailUrl);
+        }
+
+        if (isset($item['video_url']) && is_string($item['video_url']) && $item['video_url'] !== '') {
+            $item['video_url'] = self::buildProxyUrl($item['video_url']);
         }
 
         if (isset($item['children']) && is_array($item['children'])) {
@@ -132,6 +148,15 @@ class MediaProxy
         }
 
         return '';
+    }
+
+    /**
+     * @param array<string, mixed> $item
+     */
+    private static function preferVideoPosterImage(array $item): bool
+    {
+        return (int) (Env::get('MEDIA_PROXY_VIDEO_AS_IMAGE', '0') ?? '0') === 1
+            && ($item['media_type'] ?? null) === 'VIDEO';
     }
 
     /**

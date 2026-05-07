@@ -625,12 +625,18 @@ class InstagramService
 
     private function normalizeMedia(array $item): array
     {
+        $mediaType = $item['media_type'] ?? null;
+        $mediaUrl = $item['media_url'] ?? null;
+        $thumbnailUrl = $item['thumbnail_url'] ?? null;
+
         return [
             'id' => $item['id'] ?? null,
             'username' => $item['username'] ?? null,
             'caption' => $item['caption'] ?? null,
-            'media_type' => $item['media_type'] ?? null,
-            'media_url' => $item['media_url'] ?? ($item['thumbnail_url'] ?? null),
+            'media_type' => $mediaType,
+            'media_url' => $mediaUrl ?? $thumbnailUrl,
+            'thumbnail_url' => $thumbnailUrl,
+            'video_url' => $mediaType === 'VIDEO' ? $mediaUrl : null,
             'permalink' => $item['permalink'] ?? null,
             'timestamp' => $item['timestamp'] ?? null,
             'children' => $item['children']['data'] ?? [],
@@ -675,12 +681,18 @@ class InstagramService
 
         // Normalize children similarly to parent media shape, without nested children
         return array_map(function ($c) {
+            $mediaType = $c['media_type'] ?? null;
+            $mediaUrl = $c['media_url'] ?? null;
+            $thumbnailUrl = $c['thumbnail_url'] ?? null;
+
             return [
                 'id' => $c['id'] ?? null,
                 'username' => $c['username'] ?? null,
                 'caption' => $c['caption'] ?? null,
-                'media_type' => $c['media_type'] ?? null,
-                'media_url' => $c['media_url'] ?? ($c['thumbnail_url'] ?? null),
+                'media_type' => $mediaType,
+                'media_url' => $mediaUrl ?? $thumbnailUrl,
+                'thumbnail_url' => $thumbnailUrl,
+                'video_url' => $mediaType === 'VIDEO' ? $mediaUrl : null,
                 'permalink' => $c['permalink'] ?? null,
                 'timestamp' => $c['timestamp'] ?? null,
                 'children' => [],

@@ -14,6 +14,7 @@ Small PHP 8.1 service to interact with Meta Graph API (Instagram) and expose a m
 - CORS whitelist via `ALLOWED_ORIGINS`
 - Simple file cache to reduce API calls
 - Optional local media proxy so Instagram images/videos can be cached from your own domain
+- HTTP cache headers for successful JSON responses on public Instagram endpoints
 - Optional per-IP rate limiting for public Instagram endpoints
 - Health check at `/health`
 
@@ -45,8 +46,11 @@ Permissions generally required: `instagram_basic`, `pages_read_engagement`; depe
      - `MEDIA_PROXY_ENABLED=1` to rewrite returned `media_url` values to a local proxy endpoint
      - `MEDIA_PROXY_TTL_SECONDS` to control browser cache lifetime for proxied media
     - `MEDIA_PROXY_BASE_URL` if the public API origin differs from the PHP server's detected host
+    - `MEDIA_PROXY_VIDEO_AS_IMAGE=1` to serve a video's poster frame in `media_url` and keep the actual video in `video_url`
      - `MEDIA_PROXY_MAX_BYTES` to cap a single proxied download
      - `MEDIA_PROXY_ALLOWED_HOSTS` to restrict which remote media hosts are allowed
+   - Optional (JSON payload caching):
+     - `JSON_CACHE_TTL_SECONDS` to set browser/CDN cache lifetime for successful `GET /instagram/*` JSON payloads
    - Optional (token auto-refresh):
      - `REFRESH_THRESHOLD_DAYS` (e.g., 45; refresh when token expires within this window)
      - `AUTO_REFRESH_ENABLED=1` to allow opportunistic background refresh
@@ -123,7 +127,11 @@ When enabled, API responses rewrite each `media_url` to `/instagram/media?url=..
 - downloads and stores the asset under `var/cache/media`
 - serves it with `Cache-Control`, `ETag`, `Expires`, and `Last-Modified`
 
+If `MEDIA_PROXY_VIDEO_AS_IMAGE=1`, video items use Instagram's `thumbnail_url` as the proxied `media_url`. The original video remains available in `video_url`. This is the simplest server-side way to render videos as images, since Instagram already returns a poster image and no frame extraction step is needed.
+
 This is the practical way to improve PageSpeed for Instagram-hosted assets, especially videos, because the browser now requests them from your domain instead of Instagram's CDN.
+
+Successful `GET /instagram/*` JSON responses also emit `Cache-Control`, `ETag`, and `Expires` headers. This helps browsers and any CDN in front of the API avoid repeatedly fetching the same payload. The `/instagram/media` proxy endpoint is handled separately with its own asset cache headers, while non-2xx responses and `/auth/*` endpoints remain uncached.
 
 ## CORS
 Set `ALLOWED_ORIGINS` to a comma-separated list of origins (scheme + host[:port]). Use `*` to allow all (not recommended in production). Preflight OPTIONS requests are handled automatically.
