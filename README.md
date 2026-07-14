@@ -42,6 +42,9 @@ Permissions generally required: `instagram_basic`, `pages_read_engagement`; depe
      - `RATE_LIMIT_WINDOW_SECONDS` (default: 60)
      - `RATE_LIMIT_TRUST_PROXY` (0/1; enable only behind a trusted proxy)
      - `RATE_LIMIT_STORAGE` (custom counters directory; default: var/ratelimit)
+     - `RATE_LIMIT_CLEANUP_INTERVAL_SECONDS` (how often stale per-IP counters are swept; default: 900)
+     - `RATE_LIMIT_RETENTION_SECONDS` (keep inactive per-IP counters for at least this long; default: 2x window)
+     - `RATE_LIMIT_CLEANUP_BATCH_SIZE` (max files inspected per sweep; default: 500)
    - Optional (media proxy):
      - `MEDIA_PROXY_ENABLED=1` to rewrite returned `media_url` values to a local proxy endpoint
      - `MEDIA_PROXY_TTL_SECONDS` to control browser cache lifetime for proxied media
@@ -49,8 +52,13 @@ Permissions generally required: `instagram_basic`, `pages_read_engagement`; depe
     - `MEDIA_PROXY_VIDEO_AS_IMAGE=1` to serve a video's poster frame in `media_url` and keep the actual video in `video_url`
      - `MEDIA_PROXY_MAX_BYTES` to cap a single proxied download
      - `MEDIA_PROXY_ALLOWED_HOSTS` to restrict which remote media hosts are allowed
+     - `MEDIA_PROXY_CLEANUP_INTERVAL_SECONDS` (how often cached media is swept; default: 1800)
+     - `MEDIA_PROXY_CLEANUP_GRACE_SECONDS` (how long expired media stays available as stale fallback; default: 3600)
+     - `MEDIA_PROXY_CLEANUP_BATCH_SIZE` (max files inspected per sweep; default: 200)
    - Optional (JSON payload caching):
      - `JSON_CACHE_TTL_SECONDS` to set browser/CDN cache lifetime for successful `GET /instagram/*` JSON payloads
+     - `CACHE_CLEANUP_INTERVAL_SECONDS` (how often expired JSON cache entries are swept; default: 1800)
+     - `CACHE_CLEANUP_BATCH_SIZE` (max files inspected per sweep; default: 200)
    - Optional (token auto-refresh):
      - `REFRESH_THRESHOLD_DAYS` (e.g., 45; refresh when token expires within this window)
      - `AUTO_REFRESH_ENABLED=1` to allow opportunistic background refresh
@@ -143,11 +151,21 @@ Environment variables:
 - `RATE_LIMIT_MAX_REQUESTS` — max requests per IP per window (default: 60)
 - `RATE_LIMIT_WINDOW_SECONDS` — window size in seconds (default: 60)
 - `RATE_LIMIT_TRUST_PROXY` — set to `1` to respect `X-Forwarded-For` when behind a trusted proxy/load balancer
+- `RATE_LIMIT_CLEANUP_INTERVAL_SECONDS` — opportunistic sweep interval for stale files under `var/ratelimit/<group>` (default: 900)
+- `RATE_LIMIT_RETENTION_SECONDS` — how long inactive counters are kept before deletion (default: 2x the rate-limit window)
+- `RATE_LIMIT_CLEANUP_BATCH_SIZE` — max files inspected per cleanup pass (default: 500)
 
 On each request, the service adds `RateLimit-Limit` and `RateLimit-Remaining` headers. When exceeded, it returns HTTP 429 with `Retry-After`.
 
+Cleanup is automatic: public requests periodically sweep old per-IP counter files so `var/ratelimit` does not grow without bound.
+
+## Cache cleanup
+Expired JSON cache files under `var/cache` are also swept automatically during normal cache reads and writes.
+
+Media proxy assets under `var/cache/media` are cleaned up opportunistically as well. Expired assets are retained for a short grace window so the proxy can still serve stale content if a refresh fetch fails, then both the `.bin` body and `.json` metadata are removed.
+
 ## Diagnostics
-Set `DIAGNOSTICS_ENABLED=1` to enable `GET /diagnostics` for a quick environment check (PHP version, key extensions, and vendor/autoload presence). Disable in production when not needed.
+Set `DIAGNOSTICS_ENABLED=1` to enable `GET /diagnostics` for a quick environment check (PHP version, key extensions, vendor/autoload presence, and tracked async refresh job status). Disable in production when not needed.
 
 ## SSL on Windows/local dev
 If you see `cURL error 60: SSL certificate problem: unable to get local issuer certificate` when calling the Graph API:

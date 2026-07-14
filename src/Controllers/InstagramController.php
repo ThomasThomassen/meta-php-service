@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace App\Controllers;
 
 use App\Services\InstagramService;
+use App\Support\BackgroundJobMonitor;
 use App\Support\MediaProxy;
 use App\Support\Response;
 
@@ -124,6 +125,22 @@ class InstagramController
         $logDir = $root . DIRECTORY_SEPARATOR . 'var' . DIRECTORY_SEPARATOR . 'log';
         if (!is_dir($logDir)) { @mkdir($logDir, 0777, true); }
         $log = $logDir . DIRECTORY_SEPARATOR . 'refresh_tagged.log';
+        $started = BackgroundJobMonitor::tryStart('refresh_tagged_async', [
+            'status' => 'queued',
+            'started_at' => gmdate('c'),
+            'pid' => null,
+            'log_file' => $log,
+            'request' => [
+                'per_page' => $perPage,
+                'max_pages' => $maxPages,
+                'fields' => $fields,
+            ],
+        ]);
+        if ($started === null) {
+            return Response::json(['error' => 'job_already_running', 'job' => 'refresh_tagged_async'], 409);
+        }
+        $jobFile = $started['job_file'];
+        $args[] = '--job-file=' . $jobFile;
 
         $isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
         $cmd = '';
@@ -137,6 +154,10 @@ class InstagramController
             $cmd = 'nohup ' . escapeshellarg($php) . ' ' . escapeshellarg($script) . ' ' . implode(' ', array_map('escapeshellarg', $args)) . ' >> ' . escapeshellarg($log) . ' 2>&1 & echo $!';
             $pid = @shell_exec($cmd);
             $pid = $pid ? trim($pid) : null;
+            BackgroundJobMonitor::update($jobFile, [
+                'status' => 'running',
+                'pid' => $pid,
+            ]);
             return Response::json(['accepted' => true, 'method' => 'background_unix', 'pid' => $pid]);
         }
     }
@@ -166,6 +187,22 @@ class InstagramController
         $logDir = $root . DIRECTORY_SEPARATOR . 'var' . DIRECTORY_SEPARATOR . 'log';
     if (!is_dir($logDir)) { @mkdir($logDir, 0777, true); }
         $log = $logDir . DIRECTORY_SEPARATOR . 'refresh_user_media.log';
+        $started = BackgroundJobMonitor::tryStart('refresh_user_media_async', [
+            'status' => 'queued',
+            'started_at' => gmdate('c'),
+            'pid' => null,
+            'log_file' => $log,
+            'request' => [
+                'per_page' => $perPage,
+                'max_pages' => $maxPages,
+                'fields' => $fields,
+            ],
+        ]);
+        if ($started === null) {
+            return Response::json(['error' => 'job_already_running', 'job' => 'refresh_user_media_async'], 409);
+        }
+        $jobFile = $started['job_file'];
+        $args[] = '--job-file=' . $jobFile;
 
         $isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
         if ($isWindows) {
@@ -176,6 +213,10 @@ class InstagramController
             $cmd = 'nohup ' . escapeshellarg($php) . ' ' . escapeshellarg($script) . ' ' . implode(' ', array_map('escapeshellarg', $args)) . ' >> ' . escapeshellarg($log) . ' 2>&1 & echo $!';
             $pid = @shell_exec($cmd);
             $pid = $pid ? trim($pid) : null;
+            BackgroundJobMonitor::update($jobFile, [
+                'status' => 'running',
+                'pid' => $pid,
+            ]);
             return Response::json(['accepted' => true, 'method' => 'background_unix', 'pid' => $pid]);
         }
     }

@@ -9,6 +9,9 @@ class RateLimiter
     private int $window;
     private int $max;
     private bool $trustProxy;
+    private int $cleanupInterval;
+    private int $retention;
+    private int $cleanupBatchSize;
 
     public function __construct(?string $storagePath = null, ?int $windowSeconds = null, ?int $maxRequests = null, ?bool $trustProxy = null)
     {
@@ -17,6 +20,9 @@ class RateLimiter
         $this->window = $windowSeconds ?? (int) (Env::get('RATE_LIMIT_WINDOW_SECONDS', '60') ?? '60');
         $this->max = $maxRequests ?? (int) (Env::get('RATE_LIMIT_MAX_REQUESTS', '60') ?? '60');
         $this->trustProxy = $trustProxy ?? ((int) (Env::get('RATE_LIMIT_TRUST_PROXY', '0') ?? '0') === 1);
+        $this->cleanupInterval = max(60, (int) (Env::get('RATE_LIMIT_CLEANUP_INTERVAL_SECONDS', '900') ?? '900'));
+        $this->retention = max($this->window * 2, (int) (Env::get('RATE_LIMIT_RETENTION_SECONDS', (string) ($this->window * 2)) ?? (string) ($this->window * 2)));
+        $this->cleanupBatchSize = max(50, (int) (Env::get('RATE_LIMIT_CLEANUP_BATCH_SIZE', '500') ?? '500'));
 
         // Ensure base storage directory exists
         if (!is_dir($this->storage)) {
@@ -52,6 +58,7 @@ class RateLimiter
         if (!is_dir($groupDir)) {
             @mkdir($groupDir, 0777, true);
         }
+        $this->maybeCleanupGroup($groupDir);
         $file = $groupDir . DIRECTORY_SEPARATOR . $safeIp . '.json';
 
         $now = time();
@@ -123,5 +130,90 @@ class RateLimiter
         rewind($fp);
         fwrite($fp, $payload);
         fflush($fp);
+    }
+
+    private function maybeCleanupGroup(string $groupDir): void
+    {
+        $marker = $groupDir . DIRECTORY_SEPARATOR . '.cleanup.json';
+        $lockFile = $groupDir . DIRECTORY_SEPARATOR . '.cleanup.lock';
+        $now = time();
+        $lastRun = 0;
+
+        if (is_file($marker)) {
+            $raw = @file_get_contents($marker);
+            if (is_string($raw) && $raw !== '') {
+                $data = json_decode($raw, true);
+                if (is_array($data)) {
+                    $lastRun = (int) ($data['last_run'] ?? 0);
+                }
+            }
+        }
+
+        if ($lastRun > 0 && ($now - $lastRun) < $this->cleanupInterval) {
+            return;
+        }
+
+        $lock = @fopen($lockFile, 'c+');
+        if ($lock === false) {
+            return;
+        }
+
+        if (!@flock($lock, LOCK_EX | LOCK_NB)) {
+            @fclose($lock);
+            return;
+        }
+
+        try {
+            $lastRun = 0;
+            if (is_file($marker)) {
+                $raw = @file_get_contents($marker);
+                if (is_string($raw) && $raw !== '') {
+                    $data = json_decode($raw, true);
+                    if (is_array($data)) {
+                        $lastRun = (int) ($data['last_run'] ?? 0);
+                    }
+                }
+            }
+            if ($lastRun > 0 && ($now - $lastRun) < $this->cleanupInterval) {
+                return;
+            }
+
+            $deleted = 0;
+            $checked = 0;
+            $cutoff = $now - $this->retention;
+            $entries = @scandir($groupDir);
+            if (is_array($entries)) {
+                foreach ($entries as $entry) {
+                    if ($entry === '.' || $entry === '..' || $entry[0] === '.') {
+                        continue;
+                    }
+                    $path = $groupDir . DIRECTORY_SEPARATOR . $entry;
+                    if (!is_file($path) || pathinfo($path, PATHINFO_EXTENSION) !== 'json') {
+                        continue;
+                    }
+
+                    $checked++;
+                    $mtime = @filemtime($path);
+                    if ($mtime !== false && $mtime < $cutoff) {
+                        if (@unlink($path)) {
+                            $deleted++;
+                        }
+                    }
+
+                    if ($checked >= $this->cleanupBatchSize) {
+                        break;
+                    }
+                }
+            }
+
+            @file_put_contents($marker, json_encode([
+                'last_run' => $now,
+                'deleted' => $deleted,
+                'checked' => $checked,
+            ]), LOCK_EX);
+        } finally {
+            @flock($lock, LOCK_UN);
+            @fclose($lock);
+        }
     }
 }

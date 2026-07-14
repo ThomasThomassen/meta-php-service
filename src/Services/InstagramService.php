@@ -8,10 +8,15 @@ use App\Support\Env;
 use App\Support\Logger;
 use App\Support\SecretStore;
 use GuzzleHttp\Client;
+use GuzzleHttp\Exception\ConnectException;
 use GuzzleHttp\Exception\GuzzleException;
+use GuzzleHttp\Exception\RequestException;
 
 class InstagramService
 {
+    private const TRANSIENT_GET_MAX_ATTEMPTS = 3;
+    private const TRANSIENT_GET_BASE_DELAY_USEC = 500000;
+
     private Client $http;
     private Cache $cache;
 
@@ -237,7 +242,7 @@ class InstagramService
                 $page++;
                 try {
                     // "next" provides an absolute URL; the initial URL is relative to base_uri
-                    $resp = $this->http->get($nextUrl, ['http_errors' => false]);
+                    $resp = $this->getWithTransientRetry($nextUrl, ['http_errors' => false], 'Tagged fetch');
                 } catch (GuzzleException $e) {
                     $reduceSuggested = $this->isReduceAmountError($e);
                     if ($reduceSuggested) {
@@ -394,13 +399,13 @@ class InstagramService
             do {
                 $page++;
                 try {
-                    $resp = $this->http->get($nextUrl);
+                    $resp = $this->getWithTransientRetry($nextUrl, [], 'User media fetch');
                 } catch (GuzzleException $e) {
                     $reduceSuggested = $this->isReduceAmountError($e);
                     if ($reduceSuggested) {
                         Logger::warning(sprintf('Graph reduce-data hint on user media fetch (perPage=%d). Will retry smaller.', $attemptPerPage));
                     } else {
-                        Logger::error('User media fetch failed: ' . $e->getMessage());
+                        Logger::error('User media fetch failed: ' . $this->sanitizeForLogs($e->getMessage()));
                     }
                     break;
                 }
@@ -530,6 +535,71 @@ class InstagramService
         $code = (int)($j['error']['code'] ?? 0);
         $message = (string)($j['error']['message'] ?? '');
         return $code === 1 || stripos($message, 'reduce the amount of data') !== false;
+    }
+
+    /**
+     * Retry idempotent GETs that fail due to transient transport issues.
+     *
+     * @param array<string,mixed> $options
+     */
+    private function getWithTransientRetry(string $url, array $options = [], string $operation = 'Graph request'): \Psr\Http\Message\ResponseInterface
+    {
+        $maxAttempts = self::TRANSIENT_GET_MAX_ATTEMPTS;
+
+        for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+            try {
+                return $this->http->get($url, $options);
+            } catch (GuzzleException $e) {
+                $shouldRetry = $attempt < $maxAttempts && $this->shouldRetryTransientGet($e);
+                if (!$shouldRetry) {
+                    throw $e;
+                }
+
+                Logger::warning(sprintf(
+                    '%s transient transport failure on attempt %d/%d: %s',
+                    $operation,
+                    $attempt,
+                    $maxAttempts,
+                    $this->sanitizeForLogs($e->getMessage())
+                ));
+                usleep(self::TRANSIENT_GET_BASE_DELAY_USEC * $attempt);
+            }
+        }
+
+        throw new \RuntimeException(sprintf('%s retry loop exited unexpectedly.', $operation));
+    }
+
+    private function shouldRetryTransientGet(GuzzleException $e): bool
+    {
+        if ($e instanceof ConnectException) {
+            return true;
+        }
+
+        if ($e instanceof RequestException && $e->getResponse() !== null) {
+            return false;
+        }
+
+        $message = strtolower($e->getMessage());
+        $transientNeedles = [
+            'curl error 18',
+            'curl error 28',
+            'curl error 35',
+            'curl error 52',
+            'curl error 56',
+            'connection reset by peer',
+            'empty reply from server',
+            'operation timed out',
+            'recv failure',
+            'ssl_connect',
+        ];
+
+        foreach ($transientNeedles as $needle) {
+            if (str_contains($message, $needle)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function sanitizeForLogs(string $message): string

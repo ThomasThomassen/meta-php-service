@@ -207,6 +207,7 @@ $router->get('/diagnostics', function () {
             'project_root' => dirname(__DIR__),
             'vendor_autoload' => file_exists(dirname(__DIR__) . '/vendor/autoload.php'),
         ],
+        'background_jobs' => App\Support\BackgroundJobMonitor::diagnostics(),
     ]);
 });
 

@@ -7,6 +7,7 @@ require $root . '/vendor/autoload.php';
 App\Support\Env::load($root);
 
 use App\Services\InstagramService;
+use App\Support\BackgroundJobMonitor;
 use App\Support\Env;
 
 // Ensure STDERR exists for logging when running in constrained environments.
@@ -18,6 +19,7 @@ if (!defined('STDERR')) {
 $perPage = 3;
 $maxPages = 500;
 $fields = null;
+$jobFile = null;
 
 foreach ($argv as $arg) {
     if (preg_match('/^--per-page=(\d{1,3})$/', $arg, $m)) {
@@ -26,15 +28,40 @@ foreach ($argv as $arg) {
         $maxPages = max(1, (int)$m[1]);
     } elseif (preg_match('/^--fields=(.+)$/', $arg, $m)) {
         $fields = trim($m[1]);
+    } elseif (preg_match('/^--job-file=(.+)$/', $arg, $m)) {
+        $jobFile = trim($m[1]);
     }
+}
+
+if (is_string($jobFile) && $jobFile !== '') {
+    BackgroundJobMonitor::update($jobFile, [
+        'status' => 'running',
+        'started_at' => gmdate('c'),
+        'pid' => getmypid() ?: null,
+    ]);
 }
 
 $svc = new InstagramService();
 try {
     $summary = $svc->refreshAllTaggedToFile($perPage, $maxPages, null, $fields);
+    if (is_string($jobFile) && $jobFile !== '') {
+        BackgroundJobMonitor::update($jobFile, [
+            'status' => 'completed',
+            'finished_at' => gmdate('c'),
+            'summary' => $summary,
+            'error' => null,
+        ]);
+    }
     echo "updated_at={$summary['updated_at']} count={$summary['count']}\n";
     exit(0);
 } catch (Throwable $e) {
+    if (is_string($jobFile) && $jobFile !== '') {
+        BackgroundJobMonitor::update($jobFile, [
+            'status' => 'failed',
+            'finished_at' => gmdate('c'),
+            'error' => $e->getMessage(),
+        ]);
+    }
     fwrite(STDERR, 'Error: ' . $e->getMessage() . "\n");
     exit(3);
 }
