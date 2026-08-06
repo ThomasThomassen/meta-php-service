@@ -14,7 +14,7 @@ use GuzzleHttp\Exception\RequestException;
 
 class InstagramService
 {
-    private const TRANSIENT_GET_MAX_ATTEMPTS = 3;
+    private const TRANSIENT_GET_MAX_ATTEMPTS = 5;
     private const TRANSIENT_GET_BASE_DELAY_USEC = 500000;
 
     private Client $http;

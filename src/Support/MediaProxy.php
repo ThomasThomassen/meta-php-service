@@ -36,6 +36,19 @@ class MediaProxy
             return $item;
         }
 
+        return self::rewriteItemWithCacheKey($item, self::stableItemKey($item));
+    }
+
+    /**
+     * @param array<string, mixed> $item
+     * @return array<string, mixed>
+     */
+    private static function rewriteItemWithCacheKey(array $item, ?string $itemKey): array
+    {
+        if (!self::isEnabled()) {
+            return $item;
+        }
+
         $thumbnailUrl = isset($item['thumbnail_url']) && is_string($item['thumbnail_url']) ? $item['thumbnail_url'] : null;
         $mediaUrl = isset($item['media_url']) && is_string($item['media_url']) ? $item['media_url'] : null;
 
@@ -43,27 +56,27 @@ class MediaProxy
             if (($item['video_url'] ?? null) === null && $mediaUrl !== null && $mediaUrl !== '') {
                 $item['video_url'] = $mediaUrl;
             }
-            $item['media_url'] = self::buildProxyUrl($thumbnailUrl);
+            $item['media_url'] = self::buildProxyUrl($thumbnailUrl, self::stableAssetCacheKey($itemKey, 'media_url'));
         } elseif ($mediaUrl !== null) {
-            $item['media_url'] = self::buildProxyUrl($mediaUrl);
+            $item['media_url'] = self::buildProxyUrl($mediaUrl, self::stableAssetCacheKey($itemKey, 'media_url'));
         }
 
         if ($thumbnailUrl !== null && $thumbnailUrl !== '') {
-            $item['thumbnail_url'] = self::buildProxyUrl($thumbnailUrl);
+            $item['thumbnail_url'] = self::buildProxyUrl($thumbnailUrl, self::stableAssetCacheKey($itemKey, 'thumbnail_url'));
         }
 
         if (isset($item['video_url']) && is_string($item['video_url']) && $item['video_url'] !== '') {
-            $item['video_url'] = self::buildProxyUrl($item['video_url']);
+            $item['video_url'] = self::buildProxyUrl($item['video_url'], self::stableAssetCacheKey($itemKey, 'video_url'));
         }
 
         if (isset($item['children']) && is_array($item['children'])) {
             $children = [];
-            foreach ($item['children'] as $child) {
+            foreach ($item['children'] as $index => $child) {
                 if (!is_array($child)) {
                     $children[] = $child;
                     continue;
                 }
-                $children[] = self::rewriteItem($child);
+                $children[] = self::rewriteItemWithCacheKey($child, self::stableChildKey($itemKey, $child, (int) $index));
             }
             $item['children'] = $children;
         }
@@ -90,7 +103,7 @@ class MediaProxy
         $ttl = max(60, (int) (Env::get('MEDIA_PROXY_TTL_SECONDS', '86400') ?? '86400'));
         $maxBytes = max(1048576, (int) (Env::get('MEDIA_PROXY_MAX_BYTES', '52428800') ?? '52428800'));
         $cacheDir = self::cacheDir();
-        $key = sha1($url);
+        $key = self::cacheKeyForRequest($url);
         self::maybeCleanupCache($cacheDir, $ttl, $key);
         $bodyFile = $cacheDir . DIRECTORY_SEPARATOR . $key . '.bin';
         $metaFile = $cacheDir . DIRECTORY_SEPARATOR . $key . '.json';
@@ -116,13 +129,18 @@ class MediaProxy
         return self::emitCachedFile($bodyFile, $fetched, $ttl);
     }
 
-    public static function buildProxyUrl(string $url): string
+    public static function buildProxyUrl(string $url, ?string $cacheKey = null): string
     {
         if (!self::isEnabled() || !self::isAllowedRemoteUrl($url)) {
             return $url;
         }
 
-        return rtrim(self::baseUrl(), '/') . '/instagram/media?url=' . rawurlencode($url);
+        $proxyUrl = rtrim(self::baseUrl(), '/') . '/instagram/media?url=' . rawurlencode($url);
+        if ($cacheKey !== null && $cacheKey !== '') {
+            $proxyUrl .= '&key=' . rawurlencode($cacheKey);
+        }
+
+        return $proxyUrl;
     }
 
     private static function cacheDir(): string
@@ -158,6 +176,57 @@ class MediaProxy
     {
         return (int) (Env::get('MEDIA_PROXY_VIDEO_AS_IMAGE', '0') ?? '0') === 1
             && ($item['media_type'] ?? null) === 'VIDEO';
+    }
+
+    private static function cacheKeyForRequest(string $url): string
+    {
+        $providedKey = trim((string) ($_GET['key'] ?? ''));
+        if ($providedKey !== '' && preg_match('/^[A-Za-z0-9:_-]{1,160}$/', $providedKey) === 1) {
+            return 'stable_' . sha1($providedKey);
+        }
+
+        return sha1($url);
+    }
+
+    /**
+     * @param array<string, mixed> $item
+     */
+    private static function stableItemKey(array $item): ?string
+    {
+        $id = trim((string) ($item['id'] ?? ''));
+        if ($id === '') {
+            return null;
+        }
+
+        $sanitized = preg_replace('/[^A-Za-z0-9:_-]+/', '-', $id);
+        $sanitized = is_string($sanitized) ? trim($sanitized, '-') : '';
+        return $sanitized !== '' ? $sanitized : null;
+    }
+
+    private static function stableAssetCacheKey(?string $itemKey, string $variant): ?string
+    {
+        if ($itemKey === null || $itemKey === '') {
+            return null;
+        }
+
+        return 'ig:' . $itemKey . ':' . $variant;
+    }
+
+    /**
+     * @param array<string, mixed> $child
+     */
+    private static function stableChildKey(?string $parentKey, array $child, int $index): ?string
+    {
+        $childKey = self::stableItemKey($child);
+        if ($childKey !== null) {
+            return $childKey;
+        }
+
+        if ($parentKey === null || $parentKey === '') {
+            return null;
+        }
+
+        return $parentKey . ':child:' . $index;
     }
 
     /**

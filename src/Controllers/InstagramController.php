@@ -13,9 +13,7 @@ class InstagramController
     public function getHashtagMedia(): string
     {
         $tag = trim((string) ($_GET['tag'] ?? ''));
-        $limit = (int) ($_GET['limit'] ?? 12);
         $type = $_GET['type'] ?? 'recent'; // 'recent' or 'top'
-        $fields = $_GET['fields'] ?? null; // optional comma-separated fields override
 
         if ($tag === '') {
             return Response::json(['error' => 'missing_tag', 'message' => 'Query param "tag" is required.'], 400);
@@ -24,14 +22,12 @@ class InstagramController
             return Response::json(['error' => 'invalid_type', 'message' => 'Type must be recent or top.'], 400);
         }
 
-        $service = new InstagramService();
-        try {
-            $data = $service->getHashtagMedia($tag, $type, $limit, $fields);
-            $data = MediaProxy::rewriteItems($data);
-            return Response::json(['tag' => $tag, 'type' => $type, 'count' => count($data), 'data' => $data]);
-        } catch (\Throwable $e) {
-            return Response::json(['error' => 'instagram_error'], 502);
-        }
+        return Response::json([
+            'error' => 'snapshot_only_mode',
+            'message' => 'Hashtag queries are disabled because this service only reads Instagram data from cron-refreshed local snapshots.',
+            'tag' => $tag,
+            'type' => $type,
+        ], 409);
     }
 
     private function isAllowed(): bool
@@ -52,30 +48,12 @@ class InstagramController
 
     public function getSelfMedia(): string
     {
-        $limit = (int) ($_GET['limit'] ?? 12);
-        $fields = $_GET['fields'] ?? null;
-        $service = new InstagramService();
-        try {
-            $data = $service->getUserMedia($limit, $fields);
-            $data = MediaProxy::rewriteItems($data);
-            return Response::json(['scope' => 'self', 'count' => count($data), 'data' => $data]);
-        } catch (\Throwable $e) {
-            return Response::json(['error' => 'instagram_error'], 502);
-        }
+        return $this->getLocalUserMedia();
     }
 
     public function getTaggedMedia(): string
     {
-        $limit = (int) ($_GET['limit'] ?? 12);
-        $fields = $_GET['fields'] ?? null;
-        $service = new InstagramService();
-        try {
-            $data = $service->getUserTaggedMedia($limit, $fields);
-            $data = MediaProxy::rewriteItems($data);
-            return Response::json(['scope' => 'tags', 'count' => count($data), 'data' => $data]);
-        } catch (\Throwable $e) {
-            return Response::json(['error' => 'instagram_error', 'message' => $e->getMessage()], 502);
-        }
+        return $this->getLocalTagged();
     }
 
     /**
@@ -83,19 +61,12 @@ class InstagramController
      */
     public function refreshAllUserMedia(): string
     {
-        if (!$this->isAllowed()) {
-            return Response::json(['error' => 'forbidden'], 403);
-        }
-        $perPage = (int) ($_GET['per_page'] ?? 3);
-        $maxPages = (int) ($_GET['max_pages'] ?? 500);
-        $fields = $_GET['fields'] ?? null;
-        $service = new InstagramService();
-        try {
-            $summary = $service->refreshAllUserMediaToFile($perPage, $maxPages, null, $fields);
-            return Response::json(['refreshed' => true] + $summary);
-        } catch (\Throwable $e) {
-            return Response::json(['error' => 'refresh_failed', 'message' => $e->getMessage()], 502);
-        }
+        return $this->cronOnlyResponse('Synchronous HTTP refresh is disabled. Use the cron-driven refresh script instead.');
+    }
+
+    public function refreshAllTagged(): string
+    {
+        return $this->cronOnlyResponse('Synchronous HTTP refresh is disabled. Use the cron-driven refresh script instead.');
     }
 
     /**
@@ -104,62 +75,7 @@ class InstagramController
      */
     public function refreshAllTaggedAsync(): string
     {
-        if (!$this->isAllowed()) {
-            return Response::json(['error' => 'forbidden'], 403);
-        }
-        $perPage = (int) ($_GET['per_page'] ?? 3);
-        $maxPages = (int) ($_GET['max_pages'] ?? 500);
-        $fields = $_GET['fields'] ?? null;
-
-        $root = dirname(__DIR__, 2);
-        $php = PHP_BINARY ?: 'php';
-        $script = $root . DIRECTORY_SEPARATOR . 'scripts' . DIRECTORY_SEPARATOR . 'refresh_tagged.php';
-        if (!is_file($script)) {
-            return Response::json(['error' => 'missing_script'], 500);
-        }
-
-        $args = ["--per-page={$perPage}", "--max-pages={$maxPages}"];
-        if (is_string($fields) && $fields !== '') {
-            $args[] = '--fields=' . $fields;
-        }
-        $logDir = $root . DIRECTORY_SEPARATOR . 'var' . DIRECTORY_SEPARATOR . 'log';
-        if (!is_dir($logDir)) { @mkdir($logDir, 0777, true); }
-        $log = $logDir . DIRECTORY_SEPARATOR . 'refresh_tagged.log';
-        $started = BackgroundJobMonitor::tryStart('refresh_tagged_async', [
-            'status' => 'queued',
-            'started_at' => gmdate('c'),
-            'pid' => null,
-            'log_file' => $log,
-            'request' => [
-                'per_page' => $perPage,
-                'max_pages' => $maxPages,
-                'fields' => $fields,
-            ],
-        ]);
-        if ($started === null) {
-            return Response::json(['error' => 'job_already_running', 'job' => 'refresh_tagged_async'], 409);
-        }
-        $jobFile = $started['job_file'];
-        $args[] = '--job-file=' . $jobFile;
-
-        $isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
-        $cmd = '';
-        if ($isWindows) {
-            // start /B to background; no PID capture
-            $cmd = 'start /B "" ' . escapeshellarg($php) . ' ' . escapeshellarg($script) . ' ' . implode(' ', array_map('escapeshellarg', $args)) . ' >> ' . escapeshellarg($log) . ' 2>&1';
-            pclose(popen('cmd /c ' . $cmd, 'r'));
-            return Response::json(['accepted' => true, 'method' => 'background_windows']);
-        } else {
-            // nohup + background &
-            $cmd = 'nohup ' . escapeshellarg($php) . ' ' . escapeshellarg($script) . ' ' . implode(' ', array_map('escapeshellarg', $args)) . ' >> ' . escapeshellarg($log) . ' 2>&1 & echo $!';
-            $pid = @shell_exec($cmd);
-            $pid = $pid ? trim($pid) : null;
-            BackgroundJobMonitor::update($jobFile, [
-                'status' => 'running',
-                'pid' => $pid,
-            ]);
-            return Response::json(['accepted' => true, 'method' => 'background_unix', 'pid' => $pid]);
-        }
+        return $this->cronOnlyResponse('Async HTTP refresh is disabled. Schedule scripts/refresh_tagged.php from cron instead.');
     }
 
     /**
@@ -167,58 +83,7 @@ class InstagramController
      */
     public function refreshAllUserMediaAsync(): string
     {
-        if (!$this->isAllowed()) {
-            return Response::json(['error' => 'forbidden'], 403);
-        }
-        $perPage = (int) ($_GET['per_page'] ?? 3);
-        $maxPages = (int) ($_GET['max_pages'] ?? 500);
-        $fields = $_GET['fields'] ?? null;
-
-        $root = dirname(__DIR__, 2);
-        $php = PHP_BINARY ?: 'php';
-        $script = $root . DIRECTORY_SEPARATOR . 'scripts' . DIRECTORY_SEPARATOR . 'refresh_user_media.php';
-        if (!is_file($script)) {
-            return Response::json(['error' => 'missing_script'], 500);
-        }
-
-        $args = ["--per-page={$perPage}", "--max-pages={$maxPages}"];
-    if (is_string($fields) && $fields !== '') $args[] = '--fields=' . $fields;
-
-        $logDir = $root . DIRECTORY_SEPARATOR . 'var' . DIRECTORY_SEPARATOR . 'log';
-    if (!is_dir($logDir)) { @mkdir($logDir, 0777, true); }
-        $log = $logDir . DIRECTORY_SEPARATOR . 'refresh_user_media.log';
-        $started = BackgroundJobMonitor::tryStart('refresh_user_media_async', [
-            'status' => 'queued',
-            'started_at' => gmdate('c'),
-            'pid' => null,
-            'log_file' => $log,
-            'request' => [
-                'per_page' => $perPage,
-                'max_pages' => $maxPages,
-                'fields' => $fields,
-            ],
-        ]);
-        if ($started === null) {
-            return Response::json(['error' => 'job_already_running', 'job' => 'refresh_user_media_async'], 409);
-        }
-        $jobFile = $started['job_file'];
-        $args[] = '--job-file=' . $jobFile;
-
-        $isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
-        if ($isWindows) {
-            $cmd = 'start /B "" ' . escapeshellarg($php) . ' ' . escapeshellarg($script) . ' ' . implode(' ', array_map('escapeshellarg', $args)) . ' >> ' . escapeshellarg($log) . ' 2>&1';
-            pclose(popen('cmd /c ' . $cmd, 'r'));
-            return Response::json(['accepted' => true, 'method' => 'background_windows']);
-        } else {
-            $cmd = 'nohup ' . escapeshellarg($php) . ' ' . escapeshellarg($script) . ' ' . implode(' ', array_map('escapeshellarg', $args)) . ' >> ' . escapeshellarg($log) . ' 2>&1 & echo $!';
-            $pid = @shell_exec($cmd);
-            $pid = $pid ? trim($pid) : null;
-            BackgroundJobMonitor::update($jobFile, [
-                'status' => 'running',
-                'pid' => $pid,
-            ]);
-            return Response::json(['accepted' => true, 'method' => 'background_unix', 'pid' => $pid]);
-        }
+        return $this->cronOnlyResponse('Async HTTP refresh is disabled. Schedule scripts/refresh_user_media.php from cron instead.');
     }
 
     /**
@@ -564,36 +429,80 @@ class InstagramController
     public function getMergedMedia(): string
     {
         $limit = (int) ($_GET['limit'] ?? 12);
-        $fields = $_GET['fields'] ?? null;
-        $service = new InstagramService();
-        try {
-            $data = $service->getMergedSelfAndTagged($limit, $fields);
-            $data = MediaProxy::rewriteItems($data);
-            return Response::json(['scope' => 'merged', 'count' => count($data), 'data' => $data]);
-        } catch (\Throwable $e) {
-            return Response::json(['error' => 'instagram_error'], 502);
+        $limit = max(1, min(1000, $limit));
+
+        $items = $this->loadCombinedLocalMedia();
+        usort($items, function ($a, $b) {
+            $ta = isset($a['timestamp']) ? strtotime((string) $a['timestamp']) ?: 0 : 0;
+            $tb = isset($b['timestamp']) ? strtotime((string) $b['timestamp']) ?: 0 : 0;
+            return $tb <=> $ta;
+        });
+
+        $seen = [];
+        $merged = [];
+        foreach ($items as $item) {
+            $id = (string) ($item['id'] ?? '');
+            if ($id === '' || isset($seen[$id])) {
+                continue;
+            }
+            $seen[$id] = true;
+            $merged[] = $item;
+            if (count($merged) >= $limit) {
+                break;
+            }
         }
+
+        $merged = MediaProxy::rewriteItems($merged);
+
+        return Response::json(['scope' => 'merged', 'source' => 'local', 'count' => count($merged), 'data' => $merged]);
     }
 
     public function getChildrenByMediaId(): string
     {
         $mediaId = trim((string)($_GET['mediaid'] ?? ''));
-        $fields = $_GET['fields'] ?? null;
         if ($mediaId === '') {
             return Response::json(['error' => 'missing_mediaid', 'message' => 'Query param "mediaid" is required.'], 400);
         }
-        $service = new InstagramService();
-        try {
-            $data = $service->getMediaChildren($mediaId, $fields);
-            $data = MediaProxy::rewriteItems($data);
-            return Response::json(['scope' => 'children', 'media_id' => $mediaId, 'count' => count($data), 'data' => $data]);
-        } catch (\Throwable $e) {
-            return Response::json(['error' => 'instagram_error', 'message' => $e->getMessage()], 502);
+
+        foreach ($this->loadCombinedLocalMedia() as $item) {
+            if ((string) ($item['id'] ?? '') !== $mediaId) {
+                continue;
+            }
+
+            $children = isset($item['children']) && is_array($item['children']) ? $item['children'] : [];
+            $children = MediaProxy::rewriteItems($children);
+
+            return Response::json(['scope' => 'children', 'source' => 'local', 'media_id' => $mediaId, 'count' => count($children), 'data' => $children]);
         }
+
+        return Response::json(['error' => 'not_found', 'message' => 'Media ID not found in local snapshots.', 'media_id' => $mediaId], 404);
     }
 
     public function getMediaAsset(): string
     {
         return MediaProxy::serveFromRequest();
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function loadCombinedLocalMedia(): array
+    {
+        $service = new InstagramService();
+        $self = $service->loadUserMediaFromFile();
+        $tagged = $service->loadTaggedFromFile();
+
+        $selfItems = isset($self['data']) && is_array($self['data']) ? $self['data'] : [];
+        $taggedItems = isset($tagged['data']) && is_array($tagged['data']) ? $tagged['data'] : [];
+
+        return array_merge($selfItems, $taggedItems);
+    }
+
+    private function cronOnlyResponse(string $message): string
+    {
+        return Response::json([
+            'error' => 'cron_only_mode',
+            'message' => $message,
+        ], 409);
     }
 }
