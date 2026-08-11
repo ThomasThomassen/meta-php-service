@@ -61,12 +61,36 @@ class InstagramController
      */
     public function refreshAllUserMedia(): string
     {
-        return $this->cronOnlyResponse('Synchronous HTTP refresh is disabled. Use the cron-driven refresh script instead.');
+        if (!$this->isAllowed()) {
+            return Response::json(['error' => 'forbidden'], 403);
+        }
+        $perPage = (int) ($_GET['per_page'] ?? 3);
+        $maxPages = (int) ($_GET['max_pages'] ?? 500);
+        $fields = $_GET['fields'] ?? null;
+        $service = new InstagramService();
+        try {
+            $summary = $service->refreshAllUserMediaToFile($perPage, $maxPages, null, $fields);
+            return Response::json(['refreshed' => true] + $summary);
+        } catch (\Throwable $e) {
+            return Response::json(['error' => 'refresh_failed', 'message' => $e->getMessage()], 502);
+        }
     }
 
     public function refreshAllTagged(): string
     {
-        return $this->cronOnlyResponse('Synchronous HTTP refresh is disabled. Use the cron-driven refresh script instead.');
+        if (!$this->isAllowed()) {
+            return Response::json(['error' => 'forbidden'], 403);
+        }
+        $perPage = (int) ($_GET['per_page'] ?? 3);
+        $maxPages = (int) ($_GET['max_pages'] ?? 500);
+        $fields = $_GET['fields'] ?? null;
+        $service = new InstagramService();
+        try {
+            $summary = $service->refreshAllTaggedToFile($perPage, $maxPages, null, $fields);
+            return Response::json(['refreshed' => true] + $summary);
+        } catch (\Throwable $e) {
+            return Response::json(['error' => 'refresh_failed', 'message' => $e->getMessage()], 502);
+        }
     }
 
     /**
@@ -75,7 +99,60 @@ class InstagramController
      */
     public function refreshAllTaggedAsync(): string
     {
-        return $this->cronOnlyResponse('Async HTTP refresh is disabled. Schedule scripts/refresh_tagged.php from cron instead.');
+        if (!$this->isAllowed()) {
+            return Response::json(['error' => 'forbidden'], 403);
+        }
+        $perPage = (int) ($_GET['per_page'] ?? 3);
+        $maxPages = (int) ($_GET['max_pages'] ?? 500);
+        $fields = $_GET['fields'] ?? null;
+
+        $root = dirname(__DIR__, 2);
+        $php = PHP_BINARY ?: 'php';
+        $script = $root . DIRECTORY_SEPARATOR . 'scripts' . DIRECTORY_SEPARATOR . 'refresh_tagged.php';
+        if (!is_file($script)) {
+            return Response::json(['error' => 'missing_script'], 500);
+        }
+
+        $args = ["--per-page={$perPage}", "--max-pages={$maxPages}"];
+        if (is_string($fields) && $fields !== '') {
+            $args[] = '--fields=' . $fields;
+        }
+        $logDir = $root . DIRECTORY_SEPARATOR . 'var' . DIRECTORY_SEPARATOR . 'log';
+        if (!is_dir($logDir)) { @mkdir($logDir, 0777, true); }
+        $log = $logDir . DIRECTORY_SEPARATOR . 'refresh_tagged.log';
+        $started = BackgroundJobMonitor::tryStart('refresh_tagged_async', [
+            'status' => 'queued',
+            'started_at' => gmdate('c'),
+            'pid' => null,
+            'log_file' => $log,
+            'request' => [
+                'per_page' => $perPage,
+                'max_pages' => $maxPages,
+                'fields' => $fields,
+            ],
+        ]);
+        if ($started === null) {
+            return Response::json(['error' => 'job_already_running', 'job' => 'refresh_tagged_async'], 409);
+        }
+        $jobFile = $started['job_file'];
+        $args[] = '--job-file=' . $jobFile;
+
+        $isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
+        $cmd = '';
+        if ($isWindows) {
+            $cmd = 'start /B "" ' . escapeshellarg($php) . ' ' . escapeshellarg($script) . ' ' . implode(' ', array_map('escapeshellarg', $args)) . ' >> ' . escapeshellarg($log) . ' 2>&1';
+            pclose(popen('cmd /c ' . $cmd, 'r'));
+            return Response::json(['accepted' => true, 'method' => 'background_windows']);
+        }
+
+        $cmd = 'nohup ' . escapeshellarg($php) . ' ' . escapeshellarg($script) . ' ' . implode(' ', array_map('escapeshellarg', $args)) . ' >> ' . escapeshellarg($log) . ' 2>&1 & echo $!';
+        $pid = @shell_exec($cmd);
+        $pid = $pid ? trim($pid) : null;
+        BackgroundJobMonitor::update($jobFile, [
+            'status' => 'running',
+            'pid' => $pid,
+        ]);
+        return Response::json(['accepted' => true, 'method' => 'background_unix', 'pid' => $pid]);
     }
 
     /**
@@ -83,7 +160,60 @@ class InstagramController
      */
     public function refreshAllUserMediaAsync(): string
     {
-        return $this->cronOnlyResponse('Async HTTP refresh is disabled. Schedule scripts/refresh_user_media.php from cron instead.');
+        if (!$this->isAllowed()) {
+            return Response::json(['error' => 'forbidden'], 403);
+        }
+        $perPage = (int) ($_GET['per_page'] ?? 3);
+        $maxPages = (int) ($_GET['max_pages'] ?? 500);
+        $fields = $_GET['fields'] ?? null;
+
+        $root = dirname(__DIR__, 2);
+        $php = PHP_BINARY ?: 'php';
+        $script = $root . DIRECTORY_SEPARATOR . 'scripts' . DIRECTORY_SEPARATOR . 'refresh_user_media.php';
+        if (!is_file($script)) {
+            return Response::json(['error' => 'missing_script'], 500);
+        }
+
+        $args = ["--per-page={$perPage}", "--max-pages={$maxPages}"];
+        if (is_string($fields) && $fields !== '') {
+            $args[] = '--fields=' . $fields;
+        }
+
+        $logDir = $root . DIRECTORY_SEPARATOR . 'var' . DIRECTORY_SEPARATOR . 'log';
+        if (!is_dir($logDir)) { @mkdir($logDir, 0777, true); }
+        $log = $logDir . DIRECTORY_SEPARATOR . 'refresh_user_media.log';
+        $started = BackgroundJobMonitor::tryStart('refresh_user_media_async', [
+            'status' => 'queued',
+            'started_at' => gmdate('c'),
+            'pid' => null,
+            'log_file' => $log,
+            'request' => [
+                'per_page' => $perPage,
+                'max_pages' => $maxPages,
+                'fields' => $fields,
+            ],
+        ]);
+        if ($started === null) {
+            return Response::json(['error' => 'job_already_running', 'job' => 'refresh_user_media_async'], 409);
+        }
+        $jobFile = $started['job_file'];
+        $args[] = '--job-file=' . $jobFile;
+
+        $isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
+        if ($isWindows) {
+            $cmd = 'start /B "" ' . escapeshellarg($php) . ' ' . escapeshellarg($script) . ' ' . implode(' ', array_map('escapeshellarg', $args)) . ' >> ' . escapeshellarg($log) . ' 2>&1';
+            pclose(popen('cmd /c ' . $cmd, 'r'));
+            return Response::json(['accepted' => true, 'method' => 'background_windows']);
+        }
+
+        $cmd = 'nohup ' . escapeshellarg($php) . ' ' . escapeshellarg($script) . ' ' . implode(' ', array_map('escapeshellarg', $args)) . ' >> ' . escapeshellarg($log) . ' 2>&1 & echo $!';
+        $pid = @shell_exec($cmd);
+        $pid = $pid ? trim($pid) : null;
+        BackgroundJobMonitor::update($jobFile, [
+            'status' => 'running',
+            'pid' => $pid,
+        ]);
+        return Response::json(['accepted' => true, 'method' => 'background_unix', 'pid' => $pid]);
     }
 
     /**
@@ -498,11 +628,4 @@ class InstagramController
         return array_merge($selfItems, $taggedItems);
     }
 
-    private function cronOnlyResponse(string $message): string
-    {
-        return Response::json([
-            'error' => 'cron_only_mode',
-            'message' => $message,
-        ], 409);
-    }
 }

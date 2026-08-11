@@ -27,24 +27,100 @@ class AuthController
 
     public function debug(): string
     {
-        return $this->cronOnlyResponse('HTTP token debugging is disabled. Use the cron-driven token maintenance script instead.');
+        if (!$this->isAllowed()) {
+            return Response::json(['error' => 'forbidden'], 403);
+        }
+        $provided = $_GET['token'] ?? null;
+        $token = $provided ?: (Env::get('IG_ACCESS_TOKEN') ?? '');
+        $storage = Env::get('IG_TOKEN_STORAGE');
+        if ($storage && is_readable($storage)) {
+            $fromFile = trim((string) @file_get_contents($storage));
+            if ($fromFile !== '') {
+                $token = $fromFile;
+            }
+        }
+        if ($token === '') {
+            return Response::json(['error' => 'missing_token'], 400);
+        }
+        try {
+            $svc = new TokenService();
+            $data = $svc->debugToken($token);
+            return Response::json(['data' => $data]);
+        } catch (\Throwable $e) {
+            return Response::json(['error' => 'debug_failed', 'message' => $e->getMessage()], 502);
+        }
     }
 
     public function refresh(): string
     {
-        return $this->cronOnlyResponse('HTTP token refresh is disabled. Use scripts/refresh_token.php from cron instead.');
+        if (!$this->isAllowed()) {
+            return Response::json(['error' => 'forbidden'], 403);
+        }
+        $provided = $_GET['token'] ?? null;
+        $token = $provided ?: (Env::get('IG_ACCESS_TOKEN') ?? '');
+        $storage = Env::get('IG_TOKEN_STORAGE');
+        if ($storage && is_readable($storage)) {
+            $fromFile = trim((string) @file_get_contents($storage));
+            if ($fromFile !== '') {
+                $token = $fromFile;
+            }
+        }
+        if ($token === '') {
+            return Response::json(['error' => 'missing_token'], 400);
+        }
+        try {
+            $svc = new TokenService();
+            $data = $svc->refreshLongLived($token);
+            return Response::json(['refreshed' => isset($data['access_token']), 'data' => $data]);
+        } catch (\Throwable $e) {
+            return Response::json(['error' => 'refresh_failed', 'message' => $e->getMessage()], 502);
+        }
     }
 
     public function autoRefresh(): string
     {
-        return $this->cronOnlyResponse('HTTP token auto-refresh is disabled. Use scripts/refresh_token.php from cron instead.');
-    }
-
-    private function cronOnlyResponse(string $message): string
-    {
-        return Response::json([
-            'error' => 'cron_only_mode',
-            'message' => $message,
-        ], 409);
+        if (!$this->isAllowed()) {
+            return Response::json(['error' => 'forbidden'], 403);
+        }
+        $thresholdDays = (int) (Env::get('REFRESH_THRESHOLD_DAYS', '30') ?? '30');
+        $provided = $_GET['token'] ?? null;
+        $token = $provided ?: (Env::get('IG_ACCESS_TOKEN') ?? '');
+        $storage = Env::get('IG_TOKEN_STORAGE');
+        if ($storage && is_readable($storage)) {
+            $fromFile = trim((string) @file_get_contents($storage));
+            if ($fromFile !== '') {
+                $token = $fromFile;
+            }
+        }
+        if ($token === '') {
+            return Response::json(['error' => 'missing_token'], 400);
+        }
+        try {
+            $svc = new TokenService();
+            $info = $svc->debugToken($token);
+            $now = time();
+            $expiresAt = (int) ($info['expires_at'] ?? 0);
+            $expiresIn = (int) ($info['expires_in'] ?? max(0, $expiresAt - $now));
+            $shouldRefresh = false;
+            if ($expiresAt > 0) {
+                $shouldRefresh = ($expiresAt - $now) <= ($thresholdDays * 86400);
+            } else {
+                $shouldRefresh = $expiresIn <= ($thresholdDays * 86400);
+            }
+            $result = [
+                'expires_at' => $expiresAt ?: null,
+                'expires_in' => $expiresIn ?: null,
+                'threshold_days' => $thresholdDays,
+                'should_refresh' => $shouldRefresh,
+            ];
+            if ($shouldRefresh) {
+                $res = $svc->refreshLongLived($token);
+                $result['refreshed'] = isset($res['access_token']);
+                $result['refresh_response'] = $res;
+            }
+            return Response::json($result);
+        } catch (\Throwable $e) {
+            return Response::json(['error' => 'auto_refresh_failed', 'message' => $e->getMessage()], 502);
+        }
     }
 }
