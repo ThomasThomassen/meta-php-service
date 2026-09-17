@@ -223,6 +223,7 @@ class InstagramService
         $fields = $fields ?: 'id,caption,media_type,media_url,permalink,thumbnail_url,timestamp,username,children{media_type,media_url,thumbnail_url}';
         $didStripChildren = false;
         $map = [];
+        $refreshCompleted = true;
         while (true) {
             if (defined('STDERR')) {
                 @fwrite(STDERR, sprintf("[tagged-refresh] attempt perPage=%d fields_has_children=%s\n", $attemptPerPage, (is_string($fields) && str_contains($fields, 'children{')) ? 'yes' : 'no'));
@@ -251,6 +252,7 @@ class InstagramService
                             @fwrite(STDERR, sprintf("[tagged-refresh] Graph asked to reduce data (perPage=%d)\n", $attemptPerPage));
                         }
                     } else {
+                        $refreshCompleted = false;
                         Logger::error('Tagged fetch failed: ' . $this->sanitizeForLogs($e->getMessage()));
                         if (defined('STDERR')) {
                             @fwrite(STDERR, "[tagged-refresh] HTTP failed (see app.log for details)\n");
@@ -269,6 +271,7 @@ class InstagramService
                             @fwrite(STDERR, sprintf("[tagged-refresh] Graph asked to reduce data (perPage=%d)\n", $attemptPerPage));
                         }
                     } else {
+                        $refreshCompleted = false;
                         Logger::error('Tagged fetch failed: HTTP ' . $status . ' ' . $this->sanitizeForLogs($body));
                         if (defined('STDERR')) {
                             @fwrite(STDERR, "[tagged-refresh] HTTP failed (see app.log for details)\n");
@@ -310,12 +313,27 @@ class InstagramService
                     continue;
                 }
 
+                $refreshCompleted = false;
                 Logger::error('Graph reduce-data hint persisted down to perPage=1; accepting empty/partial snapshot.');
                 if (defined('STDERR')) {
                     @fwrite(STDERR, "[tagged-refresh] reduce-data persisted; giving up and keeping previous snapshot if present\n");
                 }
             }
             break; // success or non-retry error
+        }
+
+        $outPath = $outFile ?: dirname(__DIR__, 2) . '/var/cache/ig_tagged.json';
+        if (!$refreshCompleted) {
+            Logger::warning('Tagged media refresh ended early; keeping previous snapshot if present.');
+            if (is_file($outPath)) {
+                $raw = @file_get_contents($outPath);
+                $prev = $raw ? (json_decode($raw, true) ?: []) : [];
+                return [
+                    'updated_at' => $prev['updated_at'] ?? null,
+                    'count' => (int)($prev['count'] ?? 0),
+                ];
+            }
+            return ['updated_at' => null, 'count' => 0];
         }
 
         // Sort newest first
@@ -329,7 +347,6 @@ class InstagramService
         });
 
         $count = count($all);
-        $outPath = $outFile ?: dirname(__DIR__, 2) . '/var/cache/ig_tagged.json';
         if ($count === 0) {
             Logger::warning('Tagged media snapshot empty; skipping write to preserve previous data.');
             if (is_file($outPath)) {
@@ -384,6 +401,7 @@ class InstagramService
         $fields = $fields ?: 'id,caption,media_type,media_url,permalink,thumbnail_url,timestamp,username,children{media_type,media_url,thumbnail_url}';
 
         $map = [];
+        $refreshCompleted = true;
         while (true) {
             $basePath = sprintf('%s/%s/media', $apiVersion, $igBusinessId);
             $initialQuery = [
@@ -405,6 +423,7 @@ class InstagramService
                     if ($reduceSuggested) {
                         Logger::warning(sprintf('Graph reduce-data hint on user media fetch (perPage=%d). Will retry smaller.', $attemptPerPage));
                     } else {
+                        $refreshCompleted = false;
                         Logger::error('User media fetch failed: ' . $this->sanitizeForLogs($e->getMessage()));
                     }
                     break;
@@ -426,9 +445,24 @@ class InstagramService
                     $attemptPerPage--; // try again with smaller page size
                     continue;
                 }
+                $refreshCompleted = false;
                 Logger::error('Graph reduce-data hint persisted down to perPage=0 for user media; accepting empty/partial snapshot.');
             }
             break; // success or non-retry error
+        }
+
+        $outPath = $outFile ?: dirname(__DIR__, 2) . '/var/cache/ig_user_media.json';
+        if (!$refreshCompleted) {
+            Logger::warning('User media refresh ended early; keeping previous snapshot if present.');
+            if (is_file($outPath)) {
+                $raw = @file_get_contents($outPath);
+                $prev = $raw ? (json_decode($raw, true) ?: []) : [];
+                return [
+                    'updated_at' => $prev['updated_at'] ?? null,
+                    'count' => (int)($prev['count'] ?? 0),
+                ];
+            }
+            return ['updated_at' => null, 'count' => 0];
         }
 
         $all = array_values($map);
@@ -443,7 +477,6 @@ class InstagramService
         // Children are requested inline via Graph fields by default (children{...}).
 
         $count = count($all);
-        $outPath = $outFile ?: dirname(__DIR__, 2) . '/var/cache/ig_user_media.json';
         if ($count === 0) {
             Logger::warning('User media snapshot empty; skipping write to preserve previous data.');
             if (is_file($outPath)) {
