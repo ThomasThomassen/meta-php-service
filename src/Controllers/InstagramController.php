@@ -197,6 +197,7 @@ class InstagramController
             return Response::json(['error' => 'job_already_running', 'job' => 'refresh_user_media_async'], 409);
         }
         $jobFile = $started['job_file'];
+        $jobStartedDate = $started['started_at'] ?? null;
         $args[] = '--job-file=' . $jobFile;
 
         $isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
@@ -213,7 +214,7 @@ class InstagramController
             'status' => 'running',
             'pid' => $pid,
         ]);
-        return Response::json(['accepted' => true, 'method' => 'background_unix', 'pid' => $pid]);
+        return Response::json(['accepted' => true, 'method' => 'background_unix', 'pid' => $pid, 'started_at' => $jobStartedDate]);
     }
 
     /**
