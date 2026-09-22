@@ -210,7 +210,7 @@ class InstagramService
      * @param string|null $fields Optional comma-separated fields (children not supported inline)
      * @return array{updated_at:string,count:int}
      */
-    public function refreshAllTaggedToFile(int $perPage = 3, int $maxPages = 500, ?string $outFile = null, ?string $fields = null): array
+    public function refreshAllTaggedToFile(int $perPage = 1, int $maxPages = 2500, ?string $outFile = null, ?string $fields = null): array
     {
         $igBusinessId = Env::get('IG_BUSINESS_ACCOUNT_ID');
         $accessToken = $this->resolveAccessToken();
@@ -385,8 +385,8 @@ class InstagramService
      * @return array{updated_at:string,count:int}
      */
     public function refreshAllUserMediaToFile(
-        int $perPage = 3,
-        int $maxPages = 500,
+        int $perPage = 1,
+        int $maxPages = 2500,
         ?string $outFile = null,
         ?string $fields = null
     ): array {

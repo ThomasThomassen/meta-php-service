@@ -64,8 +64,8 @@ class InstagramController
         if (!$this->isAllowed()) {
             return Response::json(['error' => 'forbidden'], 403);
         }
-        $perPage = (int) ($_GET['per_page'] ?? 3);
-        $maxPages = (int) ($_GET['max_pages'] ?? 500);
+        $perPage = (int) ($_GET['per_page'] ?? 1);
+        $maxPages = (int) ($_GET['max_pages'] ?? 2500);
         $fields = $_GET['fields'] ?? null;
         $service = new InstagramService();
         try {
@@ -81,8 +81,8 @@ class InstagramController
         if (!$this->isAllowed()) {
             return Response::json(['error' => 'forbidden'], 403);
         }
-        $perPage = (int) ($_GET['per_page'] ?? 3);
-        $maxPages = (int) ($_GET['max_pages'] ?? 500);
+        $perPage = (int) ($_GET['per_page'] ?? 1);
+        $maxPages = (int) ($_GET['max_pages'] ?? 2500);
         $fields = $_GET['fields'] ?? null;
         $service = new InstagramService();
         try {
@@ -102,8 +102,8 @@ class InstagramController
         if (!$this->isAllowed()) {
             return Response::json(['error' => 'forbidden'], 403);
         }
-        $perPage = (int) ($_GET['per_page'] ?? 3);
-        $maxPages = (int) ($_GET['max_pages'] ?? 500);
+        $perPage = (int) ($_GET['per_page'] ?? 1);
+        $maxPages = (int) ($_GET['max_pages'] ?? 2500);
         $fields = $_GET['fields'] ?? null;
 
         $root = dirname(__DIR__, 2);
@@ -163,8 +163,8 @@ class InstagramController
         if (!$this->isAllowed()) {
             return Response::json(['error' => 'forbidden'], 403);
         }
-        $perPage = (int) ($_GET['per_page'] ?? 3);
-        $maxPages = (int) ($_GET['max_pages'] ?? 500);
+        $perPage = (int) ($_GET['per_page'] ?? 1);
+        $maxPages = (int) ($_GET['max_pages'] ?? 2500);
         $fields = $_GET['fields'] ?? null;
 
         $root = dirname(__DIR__, 2);

@@ -16,8 +16,8 @@ if (!defined('STDERR')) {
 }
 
 // Parse simple CLI args: --per-page=, --max-pages=, --fields=
-$perPage = 3;
-$maxPages = 500;
+$perPage = 1;
+$maxPages = 2500;
 $fields = null;
 $jobFile = null;
 
