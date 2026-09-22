@@ -423,6 +423,22 @@ class InstagramController
             $offset = max(0, (int)$offsetParam);
         }
 
+        $reelsParam = $_GET['reels'] ?? null;
+        if ($reelsParam === 'true' || $reelsParam === '1') {
+            $items = array_values(array_filter($items, function ($it) {
+                $plink = (string)($it['permalink'] ?? '');
+                if ($plink === '') return false;
+                return preg_match('~/(?:reel)/([^/]+)/?~i', $plink) === 1;
+            }));
+        } elseif ($reelsParam === 'false' || $reelsParam === '0') {
+            // preg_match from permalink: /reel/{code}/
+            $items = array_values(array_filter($items, function ($it) {
+                $plink = (string)($it['permalink'] ?? '');
+                if ($plink === '') return false;
+                return preg_match('~/(?:reel)/([^/]+)/?~i', $plink) !== 1;
+            }));
+        }
+
         $idParam = $_GET['ids'] ?? ($_GET['id'] ?? ($_GET['mediaid'] ?? ''));
         $ids = [];
         if ($idParam !== '') {
